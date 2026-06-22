@@ -4,6 +4,7 @@ const nodemailer = require("nodemailer");
 const mongoose = require("mongoose");
 const { ethers } = require("ethers");
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
 
 const app = express();
 
@@ -35,7 +36,7 @@ const UserSchema = new mongoose.Schema({
 const NonceSchema = new mongoose.Schema({
   address: { type: String, required: true, unique: true },
   nonce: { type: String, required: true },
-  createdAt: { type: Date, default: Date.now, expires: 300 }
+  createdAt: { type: Date, default: Date.now, expires: 300 } // 5 min TTL
 });
 
 const OtpSchema = new mongoose.Schema({
@@ -83,60 +84,86 @@ const transporter = nodemailer.createTransport({
 app.get("/", (req, res) => res.send("Road Management MongoDB Backend Running"));
 
 // ==========================================
-//          WEB3 BLOCKCHAIN LOGIN
+//      WEB3 BLOCKCHAIN LOGIN ENDPOINTS
 // ==========================================
-app.get("/api/web3/nonce", async (req, res) => {
-  try {
-    const { address } = req.query;
-    if (!address) return res.status(400).json({ success: false, error: "Address required" });
 
-    const nonce = Math.floor(Math.random() * 1000000).toString();
-    const lowerAddress = address.toLowerCase();
+// 1. Challenge Nonce create korar API
+app.post('/api/auth/nonce', async (req, res) => {
+    try {
+        const { walletAddress } = req.body;
+        if (!walletAddress) return res.status(400).json({ success: false, error: 'Wallet address missing' });
 
-    await Nonce.findOneAndUpdate(
-      { address: lowerAddress },
-      { nonce, createdAt: Date.now() },
-      { upsert: true, new: true }
-    );
+        const cleanAddress = walletAddress.toLowerCase();
+        
+        // Dynamic secure message challenge
+        const randomNonce = `Welcome to Road Management Platform! Sign challenge ID: ${crypto.randomBytes(16).toString('hex')}`;
 
-    res.json({ success: true, nonce });
-  } catch (error) {
-    res.status(500).json({ success: false, error: "Database error" });
-  }
+        await Nonce.findOneAndUpdate(
+            { address: cleanAddress },
+            { nonce: randomNonce, createdAt: Date.now() },
+            { upsert: true, new: true }
+        );
+        res.json({ success: true, nonce: randomNonce });
+    } catch (err) {
+        res.status(500).json({ success: false, error: 'Database error creating nonce' });
+    }
 });
 
-app.post("/api/web3/verify", async (req, res) => {
-  try {
-    const { address, signature } = req.body;
-    const lowerAddress = address.toLowerCase();
+// 2. Crypto Signature Verify korar API (UPDATED FOR PUBLIC REDIRECT)
+app.post('/api/auth/verify', async (req, res) => {
+    try {
+        const { walletAddress, signature } = req.body;
+        if (!walletAddress || !signature) return res.status(400).json({ success: false, error: 'Params missing' });
 
-    const nonceDoc = await Nonce.findOne({ address: lowerAddress });
-    if (!nonceDoc) return res.status(400).json({ success: false, error: "Nonce expired or not found." });
+        const cleanAddress = walletAddress.toLowerCase();
 
-    const message = `Sign this message to log into the Road Management Platform.\n\nNonce: ${nonceDoc.nonce}`;
-    const recoveredAddress = ethers.verifyMessage(message, signature);
+        const dbRecord = await Nonce.findOne({ address: cleanAddress });
+        if (!dbRecord) return res.status(400).json({ success: false, error: 'Nonce missing ba expired' });
 
-    if (recoveredAddress.toLowerCase() === lowerAddress) {
-      await Nonce.deleteOne({ address: lowerAddress });
+        // Recover wallet address cryptographically using ethers v6
+        const recoveredAddress = ethers.verifyMessage(dbRecord.nonce, signature);
 
-      let user = await User.findOne({ walletAddress: lowerAddress });
-      if (!user) {
-        user = await User.create({
-          walletAddress: lowerAddress,
-          userType: "authority",
-          email: lowerAddress
-        });
-      }
+        if (recoveredAddress.toLowerCase() !== cleanAddress) {
+            return res.status(401).json({ success: false, error: 'Invalid crypto signature!' });
+        }
 
-      const token = jwt.sign({ userId: user._id, address: lowerAddress }, JWT_SECRET, { expiresIn: "2h" });
-      return res.json({ success: true, message: "Web3 Login successful", token, user });
-    } else {
-      return res.status(401).json({ success: false, error: "Signature verification failed" });
+        // Clean used nonce
+        await Nonce.deleteOne({ address: cleanAddress });
+
+        // Find user
+        let user = await User.findOne({ walletAddress: cleanAddress });
+        
+        if (!user) {
+            // Jodi notun user hoy, tahole 'public' hisabe create korbo
+            user = await User.create({
+                walletAddress: cleanAddress,
+                userType: 'public', 
+                createdAt: new Date()
+            });
+        } else if (user.userType === 'authority') {
+            // Jodi aage theke 'authority' save thake, setake 'public' kore update korbo
+            user.userType = 'public';
+            await user.save();
+        }
+
+        const token = jwt.sign(
+            { userId: user._id, walletAddress: user.walletAddress, userType: user.userType },
+            JWT_SECRET,
+            { expiresIn: '24h' }
+        );
+
+        // ===== DEBUG LINES - REMOVE AFTER FIXING =====
+        console.log('DEBUG walletAddress used:', cleanAddress);
+        console.log('DEBUG user found/created:', user);
+        console.log('DEBUG userType being sent:', user.userType);
+        // ===== END DEBUG LINES =====
+
+        res.json({ success: true, token, userType: user.userType, user });
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ success: false, error: 'Verification error server-side' });
     }
-  } catch (err) {
-    console.error("Web3 Verify Error:", err);
-    res.status(500).json({ success: false, error: "Server error during verification" });
-  }
 });
 
 // ==========================================
@@ -290,6 +317,7 @@ app.get("/api/authority/summary", async (req, res) => {
   });
 });
 
+// SERVER LISTEN (Always leaves at the bottom)
 app.listen(PORT, () => {
   console.log(`Backend running on http://localhost:${PORT}`);
 });

@@ -58,33 +58,40 @@ export default function Login({ onLogin, onSignup, onBack }) {
     try {
       setWeb3Status("Connecting to wallet...");
 
-      const provider = new ethers.BrowserProvider(window.ethereum);
-      const signer = await provider.getSigner();
-      const address = await signer.getAddress();
+      // Request MetaMask accounts
+      const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+      const walletAddress = accounts[0];
 
       setWeb3Status("Fetching secure nonce...");
 
-      const nonceRes = await fetch(`http://localhost:5000/api/web3/nonce?address=${address}`);
+      // Step 1: Get nonce from server (POST /api/auth/nonce with walletAddress in body)
+      const nonceRes = await fetch("http://localhost:5000/api/auth/nonce", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ walletAddress })
+      });
       const nonceData = await nonceRes.json();
 
       if (!nonceData.success) {
-        alert(nonceData.error);
+        alert(nonceData.error || "Failed to get nonce from server.");
         setWeb3Status("");
         return;
       }
 
-      const message = `Sign this message to log into the Road Management Platform.\n\nNonce: ${nonceData.nonce}`;
-
       setWeb3Status("Please sign the message in your wallet...");
 
-      const signature = await signer.signMessage(message);
+      // Step 2: Sign the nonce directly (server sends the full message as the nonce)
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      const signature = await signer.signMessage(nonceData.nonce);
 
       setWeb3Status("Verifying signature...");
 
-      const verifyRes = await fetch("http://localhost:5000/api/web3/verify", {
+      // Step 3: Verify signature on server (POST /api/auth/verify)
+      const verifyRes = await fetch("http://localhost:5000/api/auth/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ address, signature })
+        body: JSON.stringify({ walletAddress, signature })
       });
 
       const verifyData = await verifyRes.json();
@@ -92,15 +99,21 @@ export default function Login({ onLogin, onSignup, onBack }) {
       if (verifyData.success) {
         setWeb3Status("");
         alert("Web3 Login successful!");
-        onLogin(verifyData.user);
+        // Force userType to 'public' for Web3 logins
+        const fixedUser = { ...verifyData.user, userType: 'public' };
+        onLogin(fixedUser);
       } else {
         setWeb3Status("");
-        alert("Web3 Login Failed: " + verifyData.error);
+        alert("Web3 Login Failed: " + (verifyData.error || "Verification failed."));
       }
     } catch (error) {
-      console.error(error);
+      console.error("Web3 Login Error:", error);
       setWeb3Status("");
-      alert("Web3 login process was cancelled or failed.");
+      if (error.code === 4001) {
+        alert("You rejected the signature request in MetaMask.");
+      } else {
+        alert("Web3 login failed: " + (error.message || "Unknown error"));
+      }
     }
   };
 
@@ -194,57 +207,94 @@ export default function Login({ onLogin, onSignup, onBack }) {
           </button>
         </div>
 
-        <form className="loginFormNew" onSubmit={handleLogin}>
-          <input
-            className="authInput"
-            type="text"
-            placeholder="Email or Mobile Number"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
-
-          <div className="authPasswordBox">
+        {/* AUTHORITY: Traditional email/password login */}
+        {userType === "authority" && (
+          <form className="loginFormNew" onSubmit={handleLogin}>
             <input
-              className="authInput authPasswordInput"
-              type={showPassword ? "text" : "password"}
-              placeholder="Password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              className="authInput"
+              type="text"
+              placeholder="Email or Mobile Number"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
             />
 
-            <button
-              type="button"
-              className="passwordEyeBtn"
-              onClick={() => setShowPassword(!showPassword)}
-            >
-              {showPassword ? "🙈" : "👁"}
+            <div className="authPasswordBox">
+              <input
+                className="authInput authPasswordInput"
+                type={showPassword ? "text" : "password"}
+                placeholder="Password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+
+              <button
+                type="button"
+                className="passwordEyeBtn"
+                onClick={() => setShowPassword(!showPassword)}
+              >
+                {showPassword ? "🙈" : "👁"}
+              </button>
+            </div>
+
+            <div className="authLinks">
+              <button
+                type="button"
+                className="textLinkBtn"
+                onClick={handleForgotPassword}
+              >
+                Forgot Password?
+              </button>
+
+              <button type="button" className="textLinkBtn" onClick={onSignup}>
+                Sign Up
+              </button>
+            </div>
+
+            <button type="submit" className="authSubmitBtn">
+              Log In
             </button>
-          </div>
+          </form>
+        )}
 
-          <div className="authLinks">
-            <button
-              type="button"
-              className="textLinkBtn"
-              onClick={handleForgotPassword}
-            >
-              Forgot Password?
-            </button>
+        {/* PUBLIC: email/password fields + Web3 wallet (no Log In button) */}
+        {userType === "public" && (
+          <form className="loginFormNew" onSubmit={(e) => e.preventDefault()}>
+            <input
+              className="authInput"
+              type="text"
+              placeholder="Email or Mobile Number"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
 
-            <button type="button" className="textLinkBtn" onClick={onSignup}>
-              Sign Up
-            </button>
-          </div>
+            <div className="authPasswordBox">
+              <input
+                className="authInput authPasswordInput"
+                type={showPassword ? "text" : "password"}
+                placeholder="Password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+              <button
+                type="button"
+                className="passwordEyeBtn"
+                onClick={() => setShowPassword(!showPassword)}
+              >
+                {showPassword ? "🙈" : "👁"}
+              </button>
+            </div>
 
-          <button type="submit" className="authSubmitBtn">
-            Log In
-          </button>
-
-          {/* --- NEW WEB3 BUTTON UI --- */}
-          <div style={{ marginTop: "20px", textAlign: "center" }}>
-            <div style={{ display: "flex", alignItems: "center", margin: "15px 0" }}>
-              <div style={{ flex: 1, height: "1px", backgroundColor: "#ccc" }}></div>
-              <span style={{ margin: "0 10px", color: "#666", fontSize: "14px" }}>OR</span>
-              <div style={{ flex: 1, height: "1px", backgroundColor: "#ccc" }}></div>
+            <div className="authLinks">
+              <button
+                type="button"
+                className="textLinkBtn"
+                onClick={handleForgotPassword}
+              >
+                Forgot Password?
+              </button>
+              <button type="button" className="textLinkBtn" onClick={onSignup}>
+                Sign Up
+              </button>
             </div>
 
             <button
@@ -252,32 +302,32 @@ export default function Login({ onLogin, onSignup, onBack }) {
               onClick={handleWeb3Login}
               style={{
                 width: "100%",
-                padding: "10px",
-                backgroundColor: "#f3f4f6",
-                color: "#333",
-                border: "1px solid #d1d5db",
-                borderRadius: "5px",
+                padding: "14px",
+                background: "linear-gradient(135deg, #b4dcf7ff 0%, #a1d9ffff 50%, #fb9dd2ff 100%)",
+                color: "#081830ff",
+                border: "2px solid #101010ff",
+                borderRadius: "12px",
                 cursor: "pointer",
-                fontWeight: "bold",
+                fontWeight: "700",
+                fontSize: "15px",
                 display: "flex",
                 justifyContent: "center",
                 alignItems: "center",
-                gap: "8px"
+                gap: "8px",
+                boxShadow: "0 2px 12px rgba(139, 92, 246, 0.15)",
+                letterSpacing: "0.3px"
               }}
             >
               🦊 Sign in with Web3 Wallet
             </button>
 
-            {/* Shows loading status (Connecting..., Verifying...) */}
             {web3Status && (
               <p style={{ marginTop: "10px", fontSize: "14px", color: "#0056b3" }}>
                 {web3Status}
               </p>
             )}
-          </div>
-          {/* -------------------------- */}
-
-        </form>
+          </form>
+        )}
       </div>
     </div>
   );
