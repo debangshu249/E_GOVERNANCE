@@ -7,6 +7,7 @@ export default function Signup({ onSignupDone, onLogin }) {
   const [authorityName, setAuthorityName] = useState("");
   const [department, setDepartment] = useState("");
 
+  const [uniqueId, setUniqueId] = useState("");
   const [address, setAddress] = useState("");
   const [aadhaar, setAadhaar] = useState("");
   const [mobile, setMobile] = useState("");
@@ -17,8 +18,18 @@ export default function Signup({ onSignupDone, onLogin }) {
   const handleSignup = async (e) => {
     e.preventDefault();
 
-    if (!email || !password || !mobile) {
-      alert("Please fill email, mobile and password.");
+    if (!email || !password) {
+      alert("Please fill email and password.");
+      return;
+    }
+
+    if (userType === "authority" && !uniqueId) {
+      alert("Please enter your Unique ID.");
+      return;
+    }
+
+    if (userType === "public" && !mobile) {
+      alert("Please enter your mobile number.");
       return;
     }
 
@@ -37,6 +48,7 @@ export default function Signup({ onSignupDone, onLogin }) {
       name,
       authorityName,
       department,
+      uniqueId,
       address,
       aadhaar,
       mobile,
@@ -124,26 +136,37 @@ export default function Signup({ onSignupDone, onLogin }) {
           </>
         )}
 
-        <input
-          type="text"
-          placeholder="Address"
-          value={address}
-          onChange={(e) => setAddress(e.target.value)}
-        />
+        {userType === "authority" ? (
+          <input
+            type="text"
+            placeholder="Unique ID"
+            value={uniqueId}
+            onChange={(e) => setUniqueId(e.target.value)}
+          />
+        ) : (
+          <>
+            <input
+              type="text"
+              placeholder="Address"
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+            />
 
-        <input
-          type="text"
-          placeholder="Aadhaar Number"
-          value={aadhaar}
-          onChange={(e) => setAadhaar(e.target.value)}
-        />
+            <input
+              type="text"
+              placeholder="Aadhaar Number"
+              value={aadhaar}
+              onChange={(e) => setAadhaar(e.target.value)}
+            />
 
-        <input
-          type="text"
-          placeholder="Mobile Number"
-          value={mobile}
-          onChange={(e) => setMobile(e.target.value)}
-        />
+            <input
+              type="text"
+              placeholder="Mobile Number"
+              value={mobile}
+              onChange={(e) => setMobile(e.target.value)}
+            />
+          </>
+        )}
 
         <input
           type="email"
