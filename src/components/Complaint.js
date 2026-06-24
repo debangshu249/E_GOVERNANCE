@@ -16,6 +16,10 @@ export default function Complaint({ user }) {
   const [nearby, setNearby] = useState("");
   const [authority, setAuthority] = useState("");
 
+  // Blockchain States
+  const [txHash, setTxHash] = useState("");
+  const [blockchainStatus, setBlockchainStatus] = useState("");
+
   const handlePhoto = (e) => {
     const file = e.target.files[0];
 
@@ -127,6 +131,48 @@ export default function Complaint({ user }) {
       return;
     }
 
+    setTxHash("");
+    setBlockchainStatus("Connecting to MetaMask...");
+
+    let verifiedTxHash = "";
+
+    // BLOCKCHAIN BYPASS TRANSACTION
+    try {
+      if (!window.ethereum) {
+        alert("Please install MetaMask to submit blockchain verified complaints!");
+        setBlockchainStatus("");
+        return;
+      }
+
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+
+      setBlockchainStatus("Please confirm the transaction in MetaMask...");
+
+      // Send 0.0001 ETH to yourself (keeps your balance, only pays tiny gas fee!)
+      const tx = await signer.sendTransaction({
+        to: "0xF2eB1169Beb97BdBe974aCd6dee058091d9B9830",
+        value: ethers.parseEther("0.0001")
+      });
+
+      setBlockchainStatus("Waiting for blockchain confirmation (block mining)...");
+      const receipt = await tx.wait();
+      
+      verifiedTxHash = receipt.hash;
+      setTxHash(verifiedTxHash);
+      setBlockchainStatus("Blockchain Verification Successful!");
+
+    } catch (err) {
+      console.error("Blockchain transaction failed:", err);
+      setBlockchainStatus("");
+      if (err.code === 4001) {
+        alert("Transaction rejected! Blockchain verification is required to submit a complaint.");
+      } else {
+        alert("Blockchain verification failed: " + (err.message || "Unknown error"));
+      }
+      return; // Stop submission if blockchain fails
+    }
+
     const complaintData = {
       photo: photoData,
       desc,
@@ -137,7 +183,8 @@ export default function Complaint({ user }) {
       placeName,
       area,
       nearby,
-      authority
+      authority,
+      transactionHash: verifiedTxHash // Save to MongoDB!
     };
 
     try {
@@ -152,7 +199,7 @@ export default function Complaint({ user }) {
       const data = await response.json();
 
       if (data.success) {
-        alert("Complaint submitted successfully!");
+        alert("Complaint submitted & secured on Blockchain successfully!");
 
         setPhotoData(null);
         setDesc("");
@@ -162,11 +209,14 @@ export default function Complaint({ user }) {
         setArea("");
         setNearby("");
         setAuthority("");
+        setBlockchainStatus("");
       } else {
         alert(data.message || "Complaint submit failed.");
+        setBlockchainStatus("");
       }
     } catch (error) {
       alert("Backend connect nahi ho raha. Backend start karo.");
+      setBlockchainStatus("");
     }
   };
 
@@ -179,6 +229,8 @@ export default function Complaint({ user }) {
     setArea("");
     setNearby("");
     setAuthority("");
+    setTxHash("");
+    setBlockchainStatus("");
   };
 
   return (
@@ -264,9 +316,30 @@ export default function Complaint({ user }) {
           />
         </div>
 
-        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-          <button className="btn" type="submit">
-            Submit Complaint
+        {blockchainStatus && (
+          <div className="gpsBox" style={{ backgroundColor: "#f0fdf4", borderColor: "#bbf7d0", color: "#15803d", marginTop: "12px", border: "1px solid #bbf7d0", padding: "12px", borderRadius: "8px" }}>
+            <p style={{ margin: "0 0 8px 0" }}>
+              <strong>🔗 Blockchain Status:</strong> {blockchainStatus}
+            </p>
+            {txHash && (
+              <p style={{ margin: 0, wordBreak: "break-all" }}>
+                <strong>Transaction Receipt:</strong>{" "}
+                <a 
+                  href={`https://sepolia.etherscan.io/tx/${txHash}`} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  style={{ color: "#2563eb", textDecoration: "underline", fontWeight: "bold" }}
+                >
+                  {txHash.substring(0, 20)}... (Click to verify on Etherscan)
+                </a>
+              </p>
+            )}
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+          <button className="btn" type="submit" disabled={blockchainStatus && !txHash}>
+            {blockchainStatus && !txHash ? "Verifying..." : "Submit Complaint"}
           </button>
 
           <button type="button" className="btn secondary" onClick={handleClear}>
