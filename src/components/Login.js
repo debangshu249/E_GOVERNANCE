@@ -1,14 +1,14 @@
 import React, { useState } from "react";
-import { ethers } from "ethers"; // <-- We need this for Web3
+import { ethers } from "ethers";
 
 export default function Login({ onLogin, onSignup, onBack }) {
   const [userType, setUserType] = useState("public");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [web3Status, setWeb3Status] = useState(""); // <-- New state for Web3 loading text
+  const [web3Status, setWeb3Status] = useState(""); 
 
-  // --- TRADITIONAL LOGIN ---
+  // --- TRADITIONAL LOGIN (For Authority Only) ---
   const handleLogin = async (e) => {
     e.preventDefault();
 
@@ -33,12 +33,7 @@ export default function Login({ onLogin, onSignup, onBack }) {
       const data = await response.json();
 
       if (data.success) {
-        alert(
-          userType === "authority"
-            ? "Government Authority login successful!"
-            : "Public login successful!"
-        );
-
+        alert("Government Authority login successful!");
         onLogin(data.user);
       } else {
         alert(data.message || "Invalid login credentials!");
@@ -48,7 +43,7 @@ export default function Login({ onLogin, onSignup, onBack }) {
     }
   };
 
-  // --- NEW WEB3 LOGIN LOGIC ---
+  // --- NEW WEB3 LOGIN LOGIC (For Public Only) ---
   const handleWeb3Login = async () => {
     if (!window.ethereum) {
       alert("Please install MetaMask or another Web3 wallet extension!");
@@ -62,9 +57,25 @@ export default function Login({ onLogin, onSignup, onBack }) {
       const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
       const walletAddress = accounts[0];
 
-      setWeb3Status("Fetching secure nonce...");
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
 
-      // Step 1: Get nonce from server (POST /api/auth/nonce with walletAddress in body)
+      // 🔥 TRANSACTION STEP: Login korar aage 0.0001 ETH fee katbe 🔥
+      setWeb3Status("MetaMask e Login Fee (0.0001 ETH) Approve kor...");
+      const authorityAddress = "0x000000000000000000000000000000000000dEaD"; 
+      const feeAmount = ethers.parseEther("0.0001"); 
+
+      const tx = await signer.sendTransaction({
+          to: authorityAddress,
+          value: feeAmount
+      });
+
+      setWeb3Status("Transaction verify hocche... Ektu wait kor!");
+      await tx.wait();
+
+      setWeb3Status("Payment Success! Fetching secure nonce...");
+
+      // Step 1: Get nonce from server
       const nonceRes = await fetch("http://localhost:5000/api/auth/nonce", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -80,14 +91,12 @@ export default function Login({ onLogin, onSignup, onBack }) {
 
       setWeb3Status("Please sign the message in your wallet...");
 
-      // Step 2: Sign the nonce directly (server sends the full message as the nonce)
-      const provider = new ethers.BrowserProvider(window.ethereum);
-      const signer = await provider.getSigner();
+      // Step 2: Sign the nonce
       const signature = await signer.signMessage(nonceData.nonce);
 
       setWeb3Status("Verifying signature...");
 
-      // Step 3: Verify signature on server (POST /api/auth/verify)
+      // Step 3: Verify signature on server
       const verifyRes = await fetch("http://localhost:5000/api/auth/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -98,10 +107,11 @@ export default function Login({ onLogin, onSignup, onBack }) {
 
       if (verifyData.success) {
         setWeb3Status("");
-        alert("Web3 Login successful!");
         // Force userType to 'public' for Web3 logins
-        const fixedUser = { ...verifyData.user, userType: 'public' };
-        onLogin(fixedUser);
+        if (verifyData.user) {
+            verifyData.user.userType = 'public';
+        }
+        onLogin(verifyData.user);
       } else {
         setWeb3Status("");
         alert("Web3 Login Failed: " + (verifyData.error || "Verification failed."));
@@ -110,7 +120,7 @@ export default function Login({ onLogin, onSignup, onBack }) {
       console.error("Web3 Login Error:", error);
       setWeb3Status("");
       if (error.code === 4001) {
-        alert("You rejected the signature request in MetaMask.");
+        alert("You rejected the transaction or signature request in MetaMask.");
       } else {
         alert("Web3 login failed: " + (error.message || "Unknown error"));
       }
@@ -191,7 +201,7 @@ export default function Login({ onLogin, onSignup, onBack }) {
           <button
             type="button"
             className={userType === "public" ? "roleTab activeRole" : "roleTab"}
-            onClick={() => setUserType("public")}
+            onClick={() => { setUserType("public"); setWeb3Status(""); }}
           >
             Public
           </button>
@@ -201,7 +211,7 @@ export default function Login({ onLogin, onSignup, onBack }) {
             className={
               userType === "authority" ? "roleTab activeRole" : "roleTab"
             }
-            onClick={() => setUserType("authority")}
+            onClick={() => { setUserType("authority"); setWeb3Status(""); }}
           >
             Government Authority
           </button>
@@ -256,77 +266,84 @@ export default function Login({ onLogin, onSignup, onBack }) {
           </form>
         )}
 
-        {/* PUBLIC: email/password fields + Web3 wallet (no Log In button) */}
+        {/* PUBLIC: Email/Password + Web3 wallet login */}
         {userType === "public" && (
-          <form className="loginFormNew" onSubmit={(e) => e.preventDefault()}>
-            <input
-              className="authInput"
-              type="text"
-              placeholder="Email or Mobile Number"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
+          <div className="loginFormNew" style={{ padding: "20px 0" }}>
 
-            <div className="authPasswordBox">
-              <input
-                className="authInput authPasswordInput"
-                type={showPassword ? "text" : "password"}
-                placeholder="Password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-              <button
-                type="button"
-                className="passwordEyeBtn"
-                onClick={() => setShowPassword(!showPassword)}
-              >
-                {showPassword ? "🙈" : "👁"}
-              </button>
-            </div>
-
-            <div className="authLinks">
-              <button
-                type="button"
-                className="textLinkBtn"
-                onClick={handleForgotPassword}
-              >
-                Forgot Password?
-              </button>
-              <button type="button" className="textLinkBtn" onClick={onSignup}>
-                Sign Up
-              </button>
-            </div>
-
-            <button
-              type="button"
-              onClick={handleWeb3Login}
-              style={{
-                width: "100%",
-                padding: "14px",
-                background: "linear-gradient(135deg, #b4dcf7ff 0%, #a1d9ffff 50%, #fb9dd2ff 100%)",
-                color: "#081830ff",
-                border: "2px solid #101010ff",
-                borderRadius: "12px",
-                cursor: "pointer",
-                fontWeight: "700",
-                fontSize: "15px",
-                display: "flex",
-                justifyContent: "center",
-                alignItems: "center",
-                gap: "8px",
-                boxShadow: "0 2px 12px rgba(139, 92, 246, 0.15)",
-                letterSpacing: "0.3px"
-              }}
-            >
-              🦊 Sign in with Web3 Wallet
-            </button>
+            {/* Email/Password Login */}
+            <form onSubmit={handleLogin}>
 
             {web3Status && (
-              <p style={{ marginTop: "10px", fontSize: "14px", color: "#0056b3" }}>
+              <p style={{ marginTop: "0", marginBottom: "15px", fontSize: "14px", color: "#0056b3", fontWeight: "bold", textAlign: "center" }}>
                 {web3Status}
               </p>
             )}
-          </form>
+              <input
+                className="authInput"
+                type="text"
+                placeholder="Email or Mobile Number"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+
+              <div className="authPasswordBox">
+                <input
+                  className="authInput authPasswordInput"
+                  type={showPassword ? "text" : "password"}
+                  placeholder="Password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+
+                <button
+                  type="button"
+                  className="passwordEyeBtn"
+                  onClick={() => setShowPassword(!showPassword)}
+                >
+                  {showPassword ? "🙈" : "👁"}
+                </button>
+              </div>
+
+              <div className="authLinks">
+                <button
+                  type="button"
+                  className="textLinkBtn"
+                  onClick={handleForgotPassword}
+                >
+                  Forgot Password?
+                </button>
+
+                <button type="button" className="textLinkBtn" onClick={onSignup}>
+                  Sign Up
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleWeb3Login}
+                style={{
+                  width: "100%",
+                  padding: "14px",
+                  background: "linear-gradient(135deg, #b4dcf7ff 0%, #a1d9ffff 50%, #fb9dd2ff 100%)",
+                  color: "#081830ff",
+                  border: "2px solid #101010ff",
+                  borderRadius: "12px",
+                  cursor: "pointer",
+                  fontWeight: "700",
+                  fontSize: "15px",
+                  display: "flex",
+                  justifyContent: "center",
+                  alignItems: "center",
+                  gap: "8px",
+                  boxShadow: "0 2px 12px rgba(139, 92, 246, 0.15)",
+                  letterSpacing: "0.3px",
+                  marginTop: "5px"
+                }}
+              >
+                🦊 Sign in with Web3 Wallet
+              </button>
+            </form>
+          </div>
         )}
       </div>
     </div>
